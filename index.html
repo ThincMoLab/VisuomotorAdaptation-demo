@@ -1,277 +1,244 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <title>Visuomotor Adaptation Demo</title>
-    <style>
-        canvas { background: #EEF; display: block; margin: 1em auto;}
-        #plots { display: none;}
-        #taskArea {text-align: center;}
-        body { font-family: Arial, sans-serif;}
-    </style>
+  <meta charset="UTF-8">
+  <title>Visuomotor Adaptation - Trackpad/Tablet Demo</title>
+  <style>
+    canvas { 
+        background: #eef; 
+        display: block; 
+        margin: 1em auto;
+        cursor: none;        /* <---- THIS HIDES THE SYSTEM MOUSE/POINTER */
+    }
+    #plots { display: none; }
+    #taskArea { text-align: center; }
+    body { font-family: Arial, sans-serif; }
+  </style>
 </head>
 <body>
-    <h2 style="text-align:center;">Visuomotor Adaptation Task Demo</h2>
-    <div id="taskArea">
-      <canvas id="canvas" width="600" height="600"></canvas>
-      <div id="info"></div>
-    </div>
-    <div id="plots">
-        <h3 style="text-align:center;">Results</h3>
-        <canvas id="plot1" width="600" height="300"></canvas>
-        <canvas id="plot2" width="600" height="300"></canvas>
-    </div>
-    <!-- Load Chart.js from CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script>
-    // ---- Parameters ----
-    const nTrials = 30;
-    const home = {x: 300, y: 500}; // Home position
-    const target = {x: 300, y: 100}; // Target position (fixed y)
-    const targetRadius = 12;
-    const homeRadius = 15;
-    const cursorRadius = 7;
-    const reachDistance = Math.abs(home.y - target.y); // How far to go for trial
-    const rotationDeg = 30; // Rotation of cursor from hand (degrees)
-    const rotationRad = rotationDeg * Math.PI/180; // Radians
+<h2 style="text-align:center;">Visuomotor Adaptation Demo</h2>
+<div id="taskArea">
+  <canvas id="canvas" width="600" height="600"></canvas>
+  <div id="info"></div>
+</div>
+<div id="plots">
+  <h3 style="text-align:center;">Results</h3>
+  <canvas id="plot1" width="600" height="300"></canvas>
+  <canvas id="plot2" width="600" height="300"></canvas>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+const nTrials = 30;
+const home = {x:300, y:500};
+const target = {x:300, y:100};
+const targetRadius = 12;
+const homeRadius = 15;
+const cursorRadius = 7;
+const reachDistance = Math.abs(home.y - target.y);
+const rotationDeg = 30;
+const rotationRad = rotationDeg * Math.PI/180;
+const gain = 2.0;      // Cursor amplitude gain
 
-    // --- Data ---
-    let trial = 0;
-    let isMoving = false;
-    let handPath = []; // Real movement per trial (records only on the way)
-    let handStart = {...home}; // Re-set per trial
-    let cursorPos = {...home};
-    let reachDirections = []; // angle from home to hand when target reached
-    let cursorAngles = [];    // cursor direction on each trial
-    let angleErrors = [];     // cursor vs target angle (difference from "true" direction)
+let trial = 0;
+let isTrialActive = false;
+let cursorPos = {...home};
+let handStart = null;
+let reachDirections = [];
+let cursorAngles = [];
+let angleErrors = [];
 
-    // ---- Drawing ----
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let info = document.getElementById('info');
 
-    function draw() {
-        ctx.clearRect(0,0,canvas.width,canvas.height);
+// Draw everything (no hand shown, only cursor)
+function draw() {
+    ctx.clearRect(0,0,canvas.width,canvas.height);
 
-        // draw home
-        ctx.beginPath();
-        ctx.arc(home.x, home.y, homeRadius, 0, 2*Math.PI);
-        ctx.fillStyle = "#88F";
-        ctx.fill();
+    // home position
+    ctx.beginPath();
+    ctx.arc(home.x, home.y, homeRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = "#88F";
+    ctx.fill();
 
-        // draw target
-        ctx.beginPath();
-        ctx.arc(target.x, target.y, targetRadius, 0, 2*Math.PI);
-        ctx.fillStyle = "#F88";
-        ctx.fill();
+    // target position
+    ctx.beginPath();
+    ctx.arc(target.x, target.y, targetRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = "#F88";
+    ctx.fill();
 
-        // draw cursor
-        ctx.beginPath();
-        ctx.arc(cursorPos.x, cursorPos.y, cursorRadius, 0, 2*Math.PI);
-        ctx.fillStyle = "#444";
-        ctx.fill();
+    // cursor
+    ctx.beginPath();
+    ctx.arc(cursorPos.x, cursorPos.y, cursorRadius, 0, 2 * Math.PI);
+    ctx.fillStyle = "#444";
+    ctx.fill();
+}
 
-        // draw ghost path (cursor, not hand)
-        if(handPath.length > 1) {
-            ctx.beginPath();
-            for(let i=0; i<handPath.length; i++) {
-                let {x: hx, y: hy} = handPath[i];
-                // Rotate hand position, then plot
-                let dx = hx-home.x, dy = hy-home.y;
-                let r = Math.sqrt(dx*dx + dy*dy);
-                let theta = Math.atan2(dy,dx) + rotationRad;
-                let cx = home.x + r * Math.cos(theta);
-                let cy = home.y + r * Math.sin(theta);
-                if(i===0) ctx.moveTo(cx,cy);
-                else ctx.lineTo(cx,cy);
-            }
-            ctx.strokeStyle = "#222";
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
+function setInfo(msg) {
+    info.textContent = msg;
+}
+
+function startTrial() {
+    cursorPos = {...home};
+    handStart = null; // will be set on first move
+    isTrialActive = true;
+    draw();
+    setInfo(`Trial ${trial+1}/${nTrials}: Move the cursor towards the target by moving your finger/mouse.`);
+    window.addEventListener('pointermove', globalPointerMove);
+}
+
+function updateCursorFromHand(mx, my) {
+    if (!isTrialActive) return;
+
+    // set handStart if not set (first move in trial)
+    if (!handStart) handStart = {x: mx, y: my};
+
+    // displacement vector from home according to hand movement
+    let dx = mx - handStart.x;
+    let dy = my - handStart.y;
+
+    // --------- GAIN APPLIED HERE ---------------
+    let r = Math.sqrt(dx*dx + dy*dy) * gain;
+    // -------------------------------------------
+
+    let theta = Math.atan2(dy, dx);
+
+    // Apply VISUAL rotation
+    let thetaVis = theta + rotationRad;
+
+    // Calculate cursor
+    let cx = home.x + r * Math.cos(thetaVis);
+    let cy = home.y + r * Math.sin(thetaVis);
+
+    cursorPos.x = cx;
+    cursorPos.y = cy;
+    draw();
+
+    // Check if rotated cursor reached far enough (distance from home)
+    let cursorDist = Math.hypot(cx-home.x, cy-home.y);
+    if (cursorDist >= reachDistance) {
+        finishTrial(theta, thetaVis);
     }
+}
 
-    function setInfo(msg) {
-        document.getElementById('info').textContent = msg;
+// --- Fix: Global Pointer Event ---
+function globalPointerMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    updateCursorFromHand(mx, my);
+}
+
+canvas.addEventListener('pointerdown', e => {
+    if (!isTrialActive && trial < nTrials) {
+        startTrial();
     }
+    const rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    if (!handStart && isTrialActive) handStart = {x: mx, y: my};
+});
 
-    // ---- Mouse/Touch handling ----
-    // Mouse control: click near center to start, drag upward for movement
-    canvas.addEventListener('mousedown', function(e) {
-        if(isMoving) return;
+canvas.addEventListener('pointerup', e => {});
+
+canvas.addEventListener('touchstart', e => { e.preventDefault(); });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); });
+
+// Finish
+function finishTrial(handTheta, cursorTheta) {
+    isTrialActive = false;
+    window.removeEventListener('pointermove', globalPointerMove);
+
+    let handAngleDeg = handTheta * 180 / Math.PI;
+    let cursorAngleDeg = cursorTheta * 180 / Math.PI;
+
+    let targetDx = target.x - home.x;
+    let targetDy = target.y - home.y;
+    let targetAngleRad = Math.atan2(targetDy, targetDx);
+    let targetAngleDeg = targetAngleRad * 180 / Math.PI;
+    let errorAngle = cursorAngleDeg - targetAngleDeg;
+
+    reachDirections.push(handAngleDeg);
+    cursorAngles.push(cursorAngleDeg);
+    angleErrors.push(errorAngle);
+
+    trial++;
+
+    // Reset cursor to home for next trial
+    cursorPos = { ...home };
+    draw();
+
+    if (trial >= nTrials) {
+        setInfo("Trials finished!");
+        setTimeout(endTask, 500);
+    } else {
+        setInfo(`Trial ${trial}/${nTrials} completed. The cursor is reset at home. Pointer to the blue circle and move again for the next trial.`);
+    }
+}
+
+// Start
+draw();
+setInfo(`Pointer to the blue circle ("home") and move finger/mouse to start Trial 1.`);
+
+canvas.addEventListener('pointerdown', function(e) {
+    if (!isTrialActive && trial < nTrials) {
         const rect = canvas.getBoundingClientRect();
-        let mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        let mx = e.clientX - rect.left;
+        let my = e.clientY - rect.top;
         let dist = Math.hypot(mx-home.x, my-home.y);
-        if(dist < homeRadius+10) {
-            handStart = {x: home.x, y: home.y};
-            handPath = [];
-            isMoving = true;
-            cursorPos = {...home};
-            draw();
-        }
-    });
-
-    canvas.addEventListener('mousemove', function(e) {
-        if(!isMoving) return;
-        const rect = canvas.getBoundingClientRect();
-        let mx = e.clientX - rect.left, my = e.clientY - rect.top;
-        // update hand position relative to home (but don't show hand, only cursor)
-        let handX = mx, handY = my;
-        handPath.push({x: handX, y: handY});
-        // Compute hand vector from home
-        let dx = handX-home.x, dy = handY-home.y;
-        let r = Math.sqrt(dx*dx + dy*dy);
-        // Apply rotation to both dx,dy
-        let theta = Math.atan2(dy,dx) + rotationRad;
-        let cx = home.x + r * Math.cos(theta);
-        let cy = home.y + r * Math.sin(theta);
-        cursorPos.x = cx;
-        cursorPos.y = cy;
-        draw();
-
-        // Trial completed?
-        let cursorDist = Math.hypot(cx-home.x, cy-home.y);
-        if(cursorDist > reachDistance) {
-            finishTrial();
-        }
-    });
-
-    canvas.addEventListener('mouseup', function(e) {
-        isMoving = false;
-    });
-
-    // Touch events for tablets
-    canvas.addEventListener('touchstart', function(e) {
-        if(isMoving) return;
-        const rect = canvas.getBoundingClientRect();
-        let tx = e.touches[0].clientX - rect.left;
-        let ty = e.touches[0].clientY - rect.top;
-        let dist = Math.hypot(tx-home.x, ty-home.y);
-        if(dist < homeRadius+10) {
-            handStart = {x: home.x, y: home.y};
-            handPath = [];
-            isMoving = true;
-            cursorPos = {...home};
-            draw();
-        }
-    });
-    canvas.addEventListener('touchmove', function(e) {
-        if(!isMoving) return;
-        const rect = canvas.getBoundingClientRect();
-        let tx = e.touches[0].clientX - rect.left;
-        let ty = e.touches[0].clientY - rect.top;
-        let handX = tx, handY = ty;
-        handPath.push({x: handX, y: handY});
-        let dx = handX-home.x, dy = handY-home.y;
-        let r = Math.sqrt(dx*dx + dy*dy);
-        let theta = Math.atan2(dy,dx) + rotationRad;
-        let cx = home.x + r * Math.cos(theta);
-        let cy = home.y + r * Math.sin(theta);
-        cursorPos.x = cx;
-        cursorPos.y = cy;
-        draw();
-
-        let cursorDist = Math.hypot(cx-home.x, cy-home.y);
-        if(cursorDist > reachDistance) {
-            finishTrial();
-        }
-        e.preventDefault();
-    });
-    canvas.addEventListener('touchend',function(e){
-        isMoving = false;
-    });
-
-    function finishTrial() {
-        isMoving = false;
-        // Get final direction of hand and cursor
-        let lastHand = handPath[handPath.length-1];
-        let handDx = lastHand.x-home.x;
-        let handDy = lastHand.y-home.y;
-        let handAngle = Math.atan2(handDy, handDx) * 180/Math.PI; // deg
-
-        let cursorDx = cursorPos.x-home.x;
-        let cursorDy = cursorPos.y-home.y;
-        let cursorAngle = Math.atan2(cursorDy, cursorDx) * 180/Math.PI;
-
-        // Angle from cursor to target (difference)
-        let targetDx = target.x - home.x;
-        let targetDy = target.y - home.y;
-        let idealAngle = Math.atan2(targetDy, targetDx) * 180/Math.PI;
-        let errorAngle = cursorAngle - idealAngle;
-
-        reachDirections.push(handAngle);
-        cursorAngles.push(cursorAngle);
-        angleErrors.push(errorAngle);
-
-        trial++;
-        setInfo(`Trial ${trial}/${nTrials} completed. Click near the blue circle to start next trial.`);
-        cursorPos = {...home};
-        handPath = [];
-        draw();
-
-        if(trial >= nTrials) {
-            endTask();
-        }
+        if (dist < homeRadius+10)
+            startTrial();
     }
+});
 
-    function endTask() {
-        document.getElementById('taskArea').style.display = "none";
-        document.getElementById('plots').style.display = "block";
-
-        // -- Plot reach direction vs trial --
-        new Chart(document.getElementById('plot1'),{
-            type:'line',
-            data:{
-                labels: [...Array(nTrials).keys()].map(x=>x+1),
-                datasets:[{
-                    label:"Hand reach direction (deg)",
+// Show results
+function endTask() {
+    document.getElementById('taskArea').style.display = "none";
+    document.getElementById('plots').style.display = "block";
+    new Chart(document.getElementById('plot1'),{
+        type:'line',
+        data:{
+            labels: [...Array(nTrials).keys()].map(x=>x+1),
+            datasets:[
+                {
+                    label: "Hand reach direction (deg)",
                     data: reachDirections,
                     borderColor: "#88F",
                     pointStyle:'cross',
                     fill:false
-                },{
-                    label:"Cursor direction (deg)",
+                },
+                {
+                    label: "Cursor direction (deg)",
                     data: cursorAngles,
                     borderColor: "#444",
-                    borderDash: [5,5],
+                    borderDash: [5][5],
                     fill:false
-                },{
+                },
+                {
                     label:"Target direction (deg)",
                     data: Array(nTrials).fill(
                         Math.atan2(target.y-home.y,target.x-home.x)*180/Math.PI),
                     borderColor:"#F88",
-                    borderDash:[2,2],
+                    borderDash:[2][2],
                     fill:false
-                }]
-            },
-            options:{responsive:false,
-                plugins:{title:{display:true,text:"Reach direction per trial"}},
-                scales:{y:{beginAtZero:false, title:{text:"Angle (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
-            }
-        });
-
-        // -- Plot error angle vs trial --
-        new Chart(document.getElementById('plot2'),{
-            type:'line',
-            data:{
-                labels: [...Array(nTrials).keys()].map(x=>x+1),
-                datasets:[{
-                    label:"Cursor-Target Angle Error (deg)",
-                    data: angleErrors,
-                    borderColor: "#F88",
-                    fill:false
-                }]
-            },
-            options:{responsive:false,
-                plugins:{title:{display:true,text:"Cursor angle error vs trial"}},
-                scales:{y:{beginAtZero:false, title:{text:"Angular error (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
-            }
-        });
-
-    }
-
-    // ---- Start ----
-    draw();
-    setInfo(`Click near the blue circle to start Trial 1`);
-    </script>
-</body>
-</html>
+                }
+            ]
+        },
+        options:{responsive:false,
+            plugins:{title:{display:true,text:"Reach direction per trial"}},
+            scales:{y:{beginAtZero:false, title:{text:"Angle (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
+        }
+    });
+    new Chart(document.getElementById('plot2'),{
+        type:'line',
+        data:{
+            labels: [...Array(nTrials).keys()].map(x=>x+1),
+            datasets:[{
+                label:"Cursor-Target Angle Error (deg)",
+                data: angleErrors,
+                borderColor: "#F88",
+                fill:false
+            }]
+        },
+        options:{responsive:false,
+            plugins:{title:{display:true,text:"Cursor angle error vs trial"}},
