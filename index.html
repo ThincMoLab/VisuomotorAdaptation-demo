@@ -2,13 +2,13 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Visuomotor Adaptation - Trackpad/Tablet Demo</title>
+  <title>Visuomotor Adaptation Demo</title>
   <style>
     canvas { 
         background: #eef; 
         display: block; 
         margin: 1em auto;
-        cursor: none;        /* Hide mouse pointer */
+        cursor: none;    /* Hide system pointer */
     }
     #plots { display: none; }
     #taskArea { text-align: center; }
@@ -28,6 +28,7 @@
 </div>
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+// === Parameters ===
 const nTrials = 30;
 const home = {x:300, y:500};
 const target = {x:300, y:100};
@@ -37,119 +38,121 @@ const cursorRadius = 7;
 const reachDistance = Math.abs(home.y - target.y);
 const rotationDeg = 30;
 const rotationRad = rotationDeg * Math.PI/180;
-const gain = 1.0;      // Cursor amplitude gain is 1:1 with pointer
+const gain = 1.0;      // 1:1 amplitude
 
 let trial = 0;
 let isTrialActive = false;
-let cursorPos = {...home};
-let handStart = null;
+let cursorPos = {}; // physical visual "cursor" position from hand movement
+let handStart = null; // records hand start
 let reachDirections = [];
 let cursorAngles = [];
 let angleErrors = [];
 
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-let info = document.getElementById('info');
+const info = document.getElementById('info');
 
-// Draw everything (no hand shown, only cursor)
+// ===== Drawing =====
 function draw() {
     ctx.clearRect(0,0,canvas.width,canvas.height);
 
-    // home position
+    // home
     ctx.beginPath();
-    ctx.arc(home.x, home.y, homeRadius, 0, 2 * Math.PI);
+    ctx.arc(home.x, home.y, homeRadius, 0, 2*Math.PI);
     ctx.fillStyle = "#88F";
     ctx.fill();
 
-    // target position
+    // target
     ctx.beginPath();
-    ctx.arc(target.x, target.y, targetRadius, 0, 2 * Math.PI);
+    ctx.arc(target.x, target.y, targetRadius, 0, 2*Math.PI);
     ctx.fillStyle = "#F88";
     ctx.fill();
 
-    // cursor
-    ctx.beginPath();
-    ctx.arc(cursorPos.x, cursorPos.y, cursorRadius, 0, 2 * Math.PI);
-    ctx.fillStyle = "#444";
-    ctx.fill();
+    // cursor (only at current position)
+    if (cursorPos.x !== undefined && cursorPos.y !== undefined) {
+        ctx.beginPath();
+        ctx.arc(cursorPos.x, cursorPos.y, cursorRadius, 0, 2 * Math.PI);
+        ctx.fillStyle = "#444";
+        ctx.fill();
+    }
 }
 
 function setInfo(msg) {
-    info.textContent = msg;
+    info.innerHTML = msg;
 }
 
-function startTrial() {
-    // Do NOT force cursor or pointer to home
-    handStart = null; // will be set on first move
-    isTrialActive = true;
-    draw();
-    setInfo(`Trial ${trial+1}/${nTrials}: Move the cursor towards the target by moving your finger/mouse.`);
-    window.addEventListener('pointermove', globalPointerMove);
+// On page load, place cursor at home (simulate first pointer event at home)
+cursorPos = {...home};
+draw();
+setInfo('Move your cursor (pointer) to the blue circle, then press down and move toward the target. You must move the cursor back to home by yourself after each trial.');
+
+// ==== Global pointer tracking (even off canvas as needed) ====
+function globalPointerMove(e) {
+    const rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+    if (isTrialActive) {
+        updateCursorFromHand(mx, my);
+    } else {
+        // Just render the cursor (rotated) so user can line up at home
+        // displacement from "handStart" (not used between trials, so reference to pointer position)
+        let dx = mx - home.x;
+        let dy = my - home.y;
+        let r = Math.sqrt(dx*dx + dy*dy) * gain;
+        let theta = Math.atan2(dy, dx);
+        let thetaVis = theta + rotationRad;
+        cursorPos.x = home.x + r * Math.cos(thetaVis);
+        cursorPos.y = home.y + r * Math.sin(thetaVis);
+        draw();
+    }
 }
+
+window.addEventListener('pointermove', globalPointerMove);
+
+// ==== Start trial logic ====
+// Only allow trial start if pointer and cursor BOTH at home!
+canvas.addEventListener('pointerdown', function(e) {
+    if (trial >= nTrials) return;
+    if (isTrialActive) return;
+    const rect = canvas.getBoundingClientRect();
+    let mx = e.clientX - rect.left;
+    let my = e.clientY - rect.top;
+
+    // For 1:1 gain, cursorPos is always updated with pointermove so up to date.
+    let pointerDist = Math.hypot(mx-home.x, my-home.y);
+    let cursorDist = Math.hypot(cursorPos.x-home.x, cursorPos.y-home.y);
+    if (pointerDist < homeRadius && cursorDist < homeRadius) {
+        // Start trial!
+        handStart = {x: mx, y: my};
+        isTrialActive = true;
+        setInfo(`Trial ${trial+1}/${nTrials}: Move the cursor towards the target...`);
+    } else {
+        setInfo(`To start, move both your pointer AND the cursor to the blue circle, then press down.`);
+    }
+});
 
 function updateCursorFromHand(mx, my) {
-    if (!isTrialActive) return;
-
-    // set handStart if not set (first move in trial)
-    if (!handStart) handStart = {x: mx, y: my};
-
-    // displacement vector from home according to hand movement
+    // Calculate hand movement vector from home
     let dx = mx - handStart.x;
     let dy = my - handStart.y;
-
-    // GAIN APPLIED HERE (now gain = 1.0)
     let r = Math.sqrt(dx*dx + dy*dy) * gain;
-
     let theta = Math.atan2(dy, dx);
-
-    // Apply VISUAL rotation
+    // Apply rotation
     let thetaVis = theta + rotationRad;
-
-    // Calculate cursor
-    let cx = home.x + r * Math.cos(thetaVis);
-    let cy = home.y + r * Math.sin(thetaVis);
-
-    cursorPos.x = cx;
-    cursorPos.y = cy;
+    cursorPos.x = home.x + r * Math.cos(thetaVis);
+    cursorPos.y = home.y + r * Math.sin(thetaVis);
     draw();
 
-    // Check if rotated cursor reached far enough (distance from home)
-    let cursorDist = Math.hypot(cx-home.x, cy-home.y);
+    let cursorDist = Math.hypot(cursorPos.x-home.x, cursorPos.y-home.y);
     if (cursorDist >= reachDistance) {
         finishTrial(theta, thetaVis);
     }
 }
 
-// Global pointer tracking to fix "out of canvas" issue
-function globalPointerMove(e) {
-    const rect = canvas.getBoundingClientRect();
-    let mx = e.clientX - rect.left;
-    let my = e.clientY - rect.top;
-    updateCursorFromHand(mx, my);
-}
-
-canvas.addEventListener('pointerdown', e => {
-    if (!isTrialActive && trial < nTrials) {
-        startTrial();
-    }
-    const rect = canvas.getBoundingClientRect();
-    let mx = e.clientX - rect.left;
-    let my = e.clientY - rect.top;
-    if (!handStart && isTrialActive) handStart = {x: mx, y: my};
-});
-
-canvas.addEventListener('pointerup', e => {});
-
-canvas.addEventListener('touchstart', e => { e.preventDefault(); });
-canvas.addEventListener('touchmove', e => { e.preventDefault(); });
-
 function finishTrial(handTheta, cursorTheta) {
     isTrialActive = false;
-    window.removeEventListener('pointermove', globalPointerMove);
-
     let handAngleDeg = handTheta * 180 / Math.PI;
     let cursorAngleDeg = cursorTheta * 180 / Math.PI;
-
     let targetDx = target.x - home.x;
     let targetDy = target.y - home.y;
     let targetAngleRad = Math.atan2(targetDy, targetDx);
@@ -161,35 +164,20 @@ function finishTrial(handTheta, cursorTheta) {
     angleErrors.push(errorAngle);
 
     trial++;
+    setInfo(`Trial ${trial}/${nTrials} completed.<br>
+      <b>Move both your pointer and the cursor back to the blue circle to start the next trial.</b>`);
 
-    // Do NOT reset cursor to home after trial
-    draw();
-
+    draw(); // Show cursor/circle at current location
+    // Next trial will only begin if pointer & cursor are both at "home"
     if (trial >= nTrials) {
         setInfo("Trials finished!");
         setTimeout(endTask, 500);
-    } else {
-        setInfo(`Trial ${trial}/${nTrials} completed.<br>
-            Move both your mouse pointer and cursor back to the blue circle to start the next trial.`);
     }
 }
 
-// Start
-draw();
-setInfo(`Pointer to the blue circle ("home") and move finger/mouse to start Trial 1.`);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); });
+canvas.addEventListener('touchmove', e => { e.preventDefault(); });
 
-canvas.addEventListener('pointerdown', function(e) {
-    if (!isTrialActive && trial < nTrials) {
-        const rect = canvas.getBoundingClientRect();
-        let mx = e.clientX - rect.left;
-        let my = e.clientY - rect.top;
-        let dist = Math.hypot(mx-home.x, my-home.y);
-        if (dist < homeRadius+10)
-            startTrial();
-    }
-});
-
-// Show results
 function endTask() {
     document.getElementById('taskArea').style.display = "none";
     document.getElementById('plots').style.display = "block";
