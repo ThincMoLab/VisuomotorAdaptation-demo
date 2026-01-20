@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Visuomotor Rotation Demo</title>
+    <style>
+        canvas { border: 1px solid #AAA; }
+        #taskCanvas { cursor: none; } /* Hide real mouse cursor */
+        #plot { margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <h2>Visuomotor Rotation Demo (30° cursor rotation)</h2>
+    <p>
+        Move your mouse or trackpad to guide the green cursor to the red target.<br>
+        (The real mouse pointer is hidden.) When the green cursor overlaps the red target, <b>click</b>.
+    </p>
+    <canvas id="taskCanvas" width="600" height="600"></canvas>
+    <div id="plot"></div>
+    <script>
+        // --- Parameters ---
+        const ROTATION_ANGLE = 30 * Math.PI/180; // 30 degrees in radians
+        const TRIALS = 30;
+        const canvasSize = 600;
+        const targetRadius = 10;
+        const cursorRadius = 7;
+        const startPos = { x: 300, y: 550 };
+        // Targets in a circle
+        const targetPosList = [];
+        for (let t = 0; t < TRIALS; t++) {
+            let angle = t * 2 * Math.PI / TRIALS - Math.PI/2;
+            targetPosList.push({
+                x: 300 + 200 * Math.cos(angle),
+                y: 300 + 200 * Math.sin(angle)
+            });
+        }
+
+        // --- State variables ---
+        let trial = 0;
+        let target = targetPosList[0];
+        let cursor = { x: startPos.x, y: startPos.y };
+        let lastMouse = { x: startPos.x, y: startPos.y };
+        let reachAngles = []; // degrees
+        let errorAngles = []; // degrees
+
+        const canvas = document.getElementById('taskCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // --- Helper functions ---
+        function rotate(dx, dy, theta) {
+            return {
+                x: dx * Math.cos(theta) - dy * Math.sin(theta),
+                y: dx * Math.sin(theta) + dy * Math.cos(theta),
+            };
+        }
+
+        function getAngleDeg(vec) {
+            // Angle from upward axis (negative y) CCW
+            let angleRad = Math.atan2(-(vec.y), vec.x);
+            return angleRad * 180 / Math.PI;
+        }
+
+        function angleDiffDeg(a, b) {
+            // Smallest signed difference a-b in range [-180,180]
+            let d = a - b;
+            while (d > 180) d -= 360;
+            while (d < -180) d += 360;
+            return d;
+        }
+
+        function drawScreen() {
+            ctx.clearRect(0, 0, canvasSize, canvasSize);
+
+            // Target
+            ctx.beginPath();
+            ctx.arc(target.x, target.y, targetRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = 'red';
+            ctx.fill();
+
+            // Start position
+            ctx.beginPath();
+            ctx.arc(startPos.x, startPos.y, targetRadius, 0, 2 * Math.PI);
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            // Green visual cursor
+            ctx.beginPath();
+            ctx.arc(cursor.x, cursor.y, cursorRadius, 0, 2 * Math.PI);
+            ctx.fillStyle = 'green';
+            ctx.fill();
+
+            // Instruction
+            ctx.font = "18px Arial";
+            ctx.fillStyle = "black";
+            ctx.fillText(`Trial: ${trial+1} / ${TRIALS}`, 30, 30);
+            if (trial === 0) {
+                ctx.fillText(`Guide the green cursor to target and click.`, 30, 55);
+            }
+        }
+
+        drawScreen();
+
+        // --- Mouse movement handler ---
+        canvas.onmousemove = function(e) {
+            if (trial >= TRIALS) return;
+            const rect = canvas.getBoundingClientRect();
+            let mouseX = e.clientX - rect.left;
+            let mouseY = e.clientY - rect.top;
+
+            // Calculate mouse movement delta
+            let dx = mouseX - lastMouse.x;
+            let dy = mouseY - lastMouse.y;
+
+            // Apply rotation
+            let r = rotate(dx, dy, ROTATION_ANGLE);
+
+            // Move cursor by rotated delta
+            cursor.x += r.x;
+            cursor.y += r.y;
+
+            // Clamp within canvas
+            cursor.x = Math.max(0, Math.min(canvasSize, cursor.x));
+            cursor.y = Math.max(0, Math.min(canvasSize, cursor.y));
+
+            lastMouse = {x: mouseX, y: mouseY};
+            drawScreen();
+        };
+
+        // --- Mouse click handler ---
+        canvas.onclick = function(e) {
+            if (trial >= TRIALS) return;
+            let dist = Math.sqrt((cursor.x - target.x)**2 + (cursor.y - target.y)**2);
+            if (dist < targetRadius + cursorRadius) {
+                // On target!
+
+                // Reach direction angle (degrees): from start to final cursor (relative to upward), CCW positive
+                let reachVec = {x: cursor.x - startPos.x, y: cursor.y - startPos.y};
+                let reachDeg = getAngleDeg(reachVec);
+                reachAngles.push(reachDeg);
+
+                // "True" direction to target (degrees): from start to target, relative to upward
+                let targetVec = {x: target.x - startPos.x, y: target.y - startPos.y};
+                let targetDeg = getAngleDeg(targetVec);
+
+                // Error angle (degrees): difference between reach and true target direction
+                let errDeg = angleDiffDeg(reachDeg, targetDeg);
+                errorAngles.push(errDeg);
+
+                trial++;
+                if (trial < TRIALS) {
+                    target = targetPosList[trial];
+                    cursor = { x: startPos.x, y: startPos.y };
+                    lastMouse = { x: startPos.x, y: startPos.y };
+                    drawScreen();
+                } else {
+                    finishExperiment();
+                }
+            }
+        };
+
+        function finishExperiment() {
+            drawScreen();
+            ctx.font = "22px Arial";
+            ctx.fillStyle = "black";
+            ctx.fillText("Experiment complete!", 190, 110);
+
+            // Plot results
+            plotResults();
+        }
+
+        function plotResults() {
+            const plotDiv = document.getElementById('plot');
+            plotDiv.innerHTML = "<b>Plots:</b><br>";
+
+            // SVG plotting helper
+            function svgPlot(data, labelY, labelTitle, color) {
+                let width = 500, height = 250, pad = 40;
+                let maxY = Math.max(...data);
+                let minY = Math.min(...data);
+                if (maxY-minY < 40) { maxY += 20; minY -= 20; } // For better y-scale
+
+                let pts = data.map((y, i) => {
+                    let x = pad + i * (width - 2*pad)/(TRIALS-1);
+                    let yPos = height-pad - ((y - minY)*(height-pad-pad))/(maxY-minY+1e-6);
+                    return {x, y:yPos};
+                });
+
+                let pointsStr = pts.map((p,i) => (i === 0 ? `M${p.x},${p.y}` : `L${p.x},${p.y}`)).join(" ");
+                let circlesStr = pts.map((p,i) => `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" />`).join('');
+
+                return `<svg width="${width}" height="${height}" style="background:#fcfcff;border:1px solid #ccc;margin-bottom:20px">
+                    <text x="${pad}" y="25" font-size="15">${labelTitle}</text>
+                    <text x="${width/2-20}" y="${height-pad+35}" font-size="13">Trial</text>
+                    <text x="14" y="${pad+10}" font-size="13" transform="rotate(-90,14,${pad+10})">${labelY}</text>
+                    <!-- Axes -->
+                    <line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" stroke="#555"/>
+                    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height-pad}" stroke="#555"/>
+                    <!-- Y ticks -->
+                    ${[minY, maxY].map((v,i) => {
+                            let yPos = height-pad - ((v - minY)*(height-pad-pad))/(maxY-minY+1e-6);
+                            return `<text x="6" y="${yPos+4}" font-size="11">${v.toFixed(1)}</text><line x1="${pad-5}" y1="${yPos}" x2="${pad}" y2="${yPos}" stroke="#888"/>`;
+                        }).join('')}
+                    <!-- Data lines and points -->
+                    <path d="${pointsStr}" stroke="${color}" stroke-width="2" fill="none"/>
+                    ${circlesStr}
+                </svg>`;
+            }
+
+            plotDiv.innerHTML += svgPlot(
+                reachAngles, "Reach angle (deg)",
+                "Reach angles from start per trial", "#3297D4"
+            );
+            plotDiv.innerHTML += svgPlot(
+                errorAngles, "Error angle (deg)",
+                "Error angles (relative to target) per trial", "#D43432"
+            );
+        }
+    </script>
+</body>
+</html>
