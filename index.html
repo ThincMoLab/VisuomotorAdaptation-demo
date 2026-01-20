@@ -211,7 +211,7 @@ function endTask() {
                     label: "Cursor direction (deg)",
                     data: cursorAngles,
                     borderColor: "#444",
-                    borderDash: [5][5],
+                    borderDash: [5,5],
                     fill:false
                 },
                 {
@@ -219,7 +219,7 @@ function endTask() {
                     data: Array(nTrials).fill(
                         Math.atan2(target.y-home.y,target.x-home.x)*180/Math.PI),
                     borderColor:"#F88",
-                    borderDash:[2][2],
+                    borderDash:[2,2],
                     fill:false
                 }
             ]
@@ -242,3 +242,10 @@ function endTask() {
         },
         options:{responsive:false,
             plugins:{title:{display:true,text:"Cursor angle error vs trial"}},
+            scales:{y:{beginAtZero:false, title:{text:"Angular error (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
+        }
+    });
+}
+</script>
+</body>
+</html>
