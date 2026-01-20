@@ -2,267 +2,276 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Visuomotor Rotation Demo (Full Screen, Touch Friendly)</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Visuomotor Adaptation Demo</title>
     <style>
-        html, body {
-            height: 100%;
-            margin: 0;
-            padding: 0;
-            overflow: hidden;
-        }
-        body {
-            background: #f9f9ff;
-        }
-        #taskCanvas {
-            display: block;
-            position: absolute;
-            left: 0; top: 0;
-            width: 100vw;
-            height: 100vh;
-            cursor: none;
-            touch-action: none; /* Prevents browser touch scrolling */
-        }
-        #ui {
-            position: absolute;
-            left: 20px; top: 20px; z-index: 2;
-            color: #212259;
-            background: rgba(255,255,255,0.83);
-            font-size: 20px;
-            font-family: Arial,sans-serif;
-            padding: 10px 18px;
-            border-radius: 10px;
-        }
-        #plot {
-            background: rgba(255,255,255,0.95);
-            border-radius: 8px;
-            padding: 14px;
-            position: absolute;
-            left: 50%; top: 12%;
-            transform: translate(-50%,0);
-            z-index:3;
-        }
+        canvas { background: #EEF; display: block; margin: 1em auto;}
+        #plots { display: none;}
+        #taskArea {text-align: center;}
+        body { font-family: Arial, sans-serif;}
     </style>
 </head>
 <body>
-    <div id="ui">
-        <b>Visuomotor Rotation Demo (30° full-screen)</b> <br>
-        Move the green cursor from the blue home to the red target.<br>
-        Trial ends automatically when cursor reaches target distance.<br>
-        You can use mouse, trackpad, or touch.<br>
-        <span id="trialheader"></span>
+    <h2 style="text-align:center;">Visuomotor Adaptation Task Demo</h2>
+    <div id="taskArea">
+      <canvas id="canvas" width="600" height="600"></canvas>
+      <div id="info"></div>
     </div>
-    <canvas id="taskCanvas"></canvas>
-    <div id="plot"></div>
+    <div id="plots">
+        <h3 style="text-align:center;">Results</h3>
+        <canvas id="plot1" width="600" height="300"></canvas>
+        <canvas id="plot2" width="600" height="300"></canvas>
+    </div>
+    <!-- Load Chart.js from CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
-        // --- Parameters ---
-        const ROTATION_ANGLE = 30 * Math.PI/180; // 30 degrees in radians
-        const TRIALS = 30;
+    // ---- Parameters ----
+    const nTrials = 30;
+    const home = {x: 300, y: 500}; // Home position
+    const target = {x: 300, y: 100}; // Target position (fixed y)
+    const targetRadius = 12;
+    const homeRadius = 15;
+    const cursorRadius = 7;
+    const reachDistance = Math.abs(home.y - target.y); // How far to go for trial
+    const rotationDeg = 30; // Rotation of cursor from hand (degrees)
+    const rotationRad = rotationDeg * Math.PI/180; // Radians
 
-        let canvas = document.getElementById('taskCanvas');
-        let ctx = canvas.getContext('2d');
+    // --- Data ---
+    let trial = 0;
+    let isMoving = false;
+    let handPath = []; // Real movement per trial (records only on the way)
+    let handStart = {...home}; // Re-set per trial
+    let cursorPos = {...home};
+    let reachDirections = []; // angle from home to hand when target reached
+    let cursorAngles = [];    // cursor direction on each trial
+    let angleErrors = [];     // cursor vs target angle (difference from "true" direction)
 
-        // State
-        let w = window.innerWidth, h = window.innerHeight;
-        let startRel = { x: 0.5, y: 0.85 }, targetRel = { x: 0.5, y: 0.22 };
-        let radiusScale = Math.min(w,h);
-        let targetRadius = 0.018 * radiusScale;
-        let cursorRadius = 0.015 * radiusScale;
+    // ---- Drawing ----
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
 
-        function rel2px(rel) { return {x:rel.x*w, y:rel.y*h}; }
-        let startPos = rel2px(startRel);
-        let targetPos = rel2px(targetRel);
-        let requiredDistance = Math.sqrt((startPos.x-targetPos.x)**2 + (startPos.y-targetPos.y)**2);
+    function draw() {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
 
-        let trial = 0;
-        let cursor = { x: startPos.x, y: startPos.y };
-        let lastInput = { x: startPos.x, y: startPos.y };
-        let trialStartFlag = true;
-        let reachAngles = [];
-        let errorAngles = [];
+        // draw home
+        ctx.beginPath();
+        ctx.arc(home.x, home.y, homeRadius, 0, 2*Math.PI);
+        ctx.fillStyle = "#88F";
+        ctx.fill();
 
-        function rotate(dx, dy, theta) {
-            return {
-                x: dx * Math.cos(theta) - dy * Math.sin(theta),
-                y: dx * Math.sin(theta) + dy * Math.cos(theta),
-            };
-        }
-        function getAngleDeg(vec) {
-            let angleRad = Math.atan2(-(vec.y), vec.x);
-            return angleRad * 180 / Math.PI;
-        }
-        function angleDiffDeg(a, b) {
-            let d = a - b;
-            while (d > 180) d -= 360;
-            while (d < -180) d += 360;
-            return d;
-        }
-        function dist(a, b) {
-            return Math.sqrt((a.x - b.x)**2 + (a.y - b.y)**2);
-        }
+        // draw target
+        ctx.beginPath();
+        ctx.arc(target.x, target.y, targetRadius, 0, 2*Math.PI);
+        ctx.fillStyle = "#F88";
+        ctx.fill();
 
-        function drawScreen() {
-            ctx.clearRect(0, 0, w, h);
+        // draw cursor
+        ctx.beginPath();
+        ctx.arc(cursorPos.x, cursorPos.y, cursorRadius, 0, 2*Math.PI);
+        ctx.fillStyle = "#444";
+        ctx.fill();
 
-            // Target
+        // draw ghost path (cursor, not hand)
+        if(handPath.length > 1) {
             ctx.beginPath();
-            ctx.arc(targetPos.x, targetPos.y, targetRadius, 0, 2 * Math.PI);
-            ctx.fillStyle = 'red';
-            ctx.fill();
-
-            // Home position
-            ctx.beginPath();
-            ctx.arc(startPos.x, startPos.y, targetRadius, 0, 2 * Math.PI);
-            ctx.strokeStyle = 'blue';
+            for(let i=0; i<handPath.length; i++) {
+                let {x: hx, y: hy} = handPath[i];
+                // Rotate hand position, then plot
+                let dx = hx-home.x, dy = hy-home.y;
+                let r = Math.sqrt(dx*dx + dy*dy);
+                let theta = Math.atan2(dy,dx) + rotationRad;
+                let cx = home.x + r * Math.cos(theta);
+                let cy = home.y + r * Math.sin(theta);
+                if(i===0) ctx.moveTo(cx,cy);
+                else ctx.lineTo(cx,cy);
+            }
+            ctx.strokeStyle = "#222";
             ctx.lineWidth = 2;
             ctx.stroke();
-
-            // Green visual cursor
-            ctx.beginPath();
-            ctx.arc(cursor.x, cursor.y, cursorRadius, 0, 2 * Math.PI);
-            ctx.fillStyle = 'green';
-            ctx.fill();
-
-            document.getElementById('trialheader').innerHTML =
-                `Trial: <b>${trial+1}</b> / ${TRIALS}<br>` +
-                (trial === 0 ? "Move green cursor from home to target. Trial ends automatically." : "");
         }
+    }
 
-        // Handle full-screen and scaling
-        function resizeCanvas() {
-            w = window.innerWidth;
-            h = window.innerHeight;
-            canvas.width = w;
-            canvas.height = h;
-            radiusScale = Math.min(w,h);
-            targetRadius = 0.018 * radiusScale;
-            cursorRadius = 0.015 * radiusScale;
-            startPos = rel2px(startRel);
-            targetPos = rel2px(targetRel);
-            requiredDistance = dist(startPos, targetPos);
+    function setInfo(msg) {
+        document.getElementById('info').textContent = msg;
+    }
 
-            // Re-center cursor for next trial if needed
-            cursor = { x: startPos.x, y: startPos.y };
-            lastInput = { x: startPos.x, y: startPos.y };
-            drawScreen();
+    // ---- Mouse/Touch handling ----
+    // Mouse control: click near center to start, drag upward for movement
+    canvas.addEventListener('mousedown', function(e) {
+        if(isMoving) return;
+        const rect = canvas.getBoundingClientRect();
+        let mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        let dist = Math.hypot(mx-home.x, my-home.y);
+        if(dist < homeRadius+10) {
+            handStart = {x: home.x, y: home.y};
+            handPath = [];
+            isMoving = true;
+            cursorPos = {...home};
+            draw();
         }
-        window.addEventListener('resize', resizeCanvas);
-        resizeCanvas();
+    });
 
-        // Mouse movement handler
-        canvas.onmousemove = function(e) {
-            moveHandler(e.clientX, e.clientY);
-        };
+    canvas.addEventListener('mousemove', function(e) {
+        if(!isMoving) return;
+        const rect = canvas.getBoundingClientRect();
+        let mx = e.clientX - rect.left, my = e.clientY - rect.top;
+        // update hand position relative to home (but don't show hand, only cursor)
+        let handX = mx, handY = my;
+        handPath.push({x: handX, y: handY});
+        // Compute hand vector from home
+        let dx = handX-home.x, dy = handY-home.y;
+        let r = Math.sqrt(dx*dx + dy*dy);
+        // Apply rotation to both dx,dy
+        let theta = Math.atan2(dy,dx) + rotationRad;
+        let cx = home.x + r * Math.cos(theta);
+        let cy = home.y + r * Math.sin(theta);
+        cursorPos.x = cx;
+        cursorPos.y = cy;
+        draw();
 
-        // Touch support for tablets/phones!
-        canvas.addEventListener('touchmove', function(e) {
-            if (trial >= TRIALS) return;
-            if (e.touches.length !== 1) return; // single finger only
-            let touch = e.touches[0];
-            // Get coordinates relative to canvas
-            const rect = canvas.getBoundingClientRect();
-            let touchX = touch.clientX - rect.left;
-            let touchY = touch.clientY - rect.top;
-            moveHandler(touchX, touchY);
-            e.preventDefault();
-        }, {passive: false}); // so we can prevent scroll
+        // Trial completed?
+        let cursorDist = Math.hypot(cx-home.x, cy-home.y);
+        if(cursorDist > reachDistance) {
+            finishTrial();
+        }
+    });
 
-        function moveHandler(inputX, inputY) {
-            if (trial >= TRIALS) return;
+    canvas.addEventListener('mouseup', function(e) {
+        isMoving = false;
+    });
 
-            if (trialStartFlag) {
-                lastInput = {x: inputX, y: inputY};
-                trialStartFlag = false;
-                drawScreen();
-                return;
+    // Touch events for tablets
+    canvas.addEventListener('touchstart', function(e) {
+        if(isMoving) return;
+        const rect = canvas.getBoundingClientRect();
+        let tx = e.touches[0].clientX - rect.left;
+        let ty = e.touches[0].clientY - rect.top;
+        let dist = Math.hypot(tx-home.x, ty-home.y);
+        if(dist < homeRadius+10) {
+            handStart = {x: home.x, y: home.y};
+            handPath = [];
+            isMoving = true;
+            cursorPos = {...home};
+            draw();
+        }
+    });
+    canvas.addEventListener('touchmove', function(e) {
+        if(!isMoving) return;
+        const rect = canvas.getBoundingClientRect();
+        let tx = e.touches[0].clientX - rect.left;
+        let ty = e.touches[0].clientY - rect.top;
+        let handX = tx, handY = ty;
+        handPath.push({x: handX, y: handY});
+        let dx = handX-home.x, dy = handY-home.y;
+        let r = Math.sqrt(dx*dx + dy*dy);
+        let theta = Math.atan2(dy,dx) + rotationRad;
+        let cx = home.x + r * Math.cos(theta);
+        let cy = home.y + r * Math.sin(theta);
+        cursorPos.x = cx;
+        cursorPos.y = cy;
+        draw();
+
+        let cursorDist = Math.hypot(cx-home.x, cy-home.y);
+        if(cursorDist > reachDistance) {
+            finishTrial();
+        }
+        e.preventDefault();
+    });
+    canvas.addEventListener('touchend',function(e){
+        isMoving = false;
+    });
+
+    function finishTrial() {
+        isMoving = false;
+        // Get final direction of hand and cursor
+        let lastHand = handPath[handPath.length-1];
+        let handDx = lastHand.x-home.x;
+        let handDy = lastHand.y-home.y;
+        let handAngle = Math.atan2(handDy, handDx) * 180/Math.PI; // deg
+
+        let cursorDx = cursorPos.x-home.x;
+        let cursorDy = cursorPos.y-home.y;
+        let cursorAngle = Math.atan2(cursorDy, cursorDx) * 180/Math.PI;
+
+        // Angle from cursor to target (difference)
+        let targetDx = target.x - home.x;
+        let targetDy = target.y - home.y;
+        let idealAngle = Math.atan2(targetDy, targetDx) * 180/Math.PI;
+        let errorAngle = cursorAngle - idealAngle;
+
+        reachDirections.push(handAngle);
+        cursorAngles.push(cursorAngle);
+        angleErrors.push(errorAngle);
+
+        trial++;
+        setInfo(`Trial ${trial}/${nTrials} completed. Click near the blue circle to start next trial.`);
+        cursorPos = {...home};
+        handPath = [];
+        draw();
+
+        if(trial >= nTrials) {
+            endTask();
+        }
+    }
+
+    function endTask() {
+        document.getElementById('taskArea').style.display = "none";
+        document.getElementById('plots').style.display = "block";
+
+        // -- Plot reach direction vs trial --
+        new Chart(document.getElementById('plot1'),{
+            type:'line',
+            data:{
+                labels: [...Array(nTrials).keys()].map(x=>x+1),
+                datasets:[{
+                    label:"Hand reach direction (deg)",
+                    data: reachDirections,
+                    borderColor: "#88F",
+                    pointStyle:'cross',
+                    fill:false
+                },{
+                    label:"Cursor direction (deg)",
+                    data: cursorAngles,
+                    borderColor: "#444",
+                    borderDash: [5,5],
+                    fill:false
+                },{
+                    label:"Target direction (deg)",
+                    data: Array(nTrials).fill(
+                        Math.atan2(target.y-home.y,target.x-home.x)*180/Math.PI),
+                    borderColor:"#F88",
+                    borderDash:[2,2],
+                    fill:false
+                }]
+            },
+            options:{responsive:false,
+                plugins:{title:{display:true,text:"Reach direction per trial"}},
+                scales:{y:{beginAtZero:false, title:{text:"Angle (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
             }
+        });
 
-            let dx = inputX - lastInput.x;
-            let dy = inputY - lastInput.y;
-
-            let r = rotate(dx, dy, ROTATION_ANGLE);
-
-            cursor.x += r.x;
-            cursor.y += r.y;
-            cursor.x = Math.max(0, Math.min(w, cursor.x));
-            cursor.y = Math.max(0, Math.min(h, cursor.y));
-
-            lastInput = {x: inputX, y: inputY};
-            drawScreen();
-
-            let curDist = dist(cursor, startPos);
-            if (curDist >= requiredDistance) {
-                let reachVec = {x: cursor.x - startPos.x, y: cursor.y - startPos.y};
-                let reachDeg = getAngleDeg(reachVec);
-                reachAngles.push(reachDeg);
-
-                let targetVec = {x: targetPos.x - startPos.x, y: targetPos.y - startPos.y};
-                let targetDeg = getAngleDeg(targetVec);
-                let errDeg = angleDiffDeg(reachDeg, targetDeg);
-                errorAngles.push(errDeg);
-
-                trial++;
-                if (trial < TRIALS) {
-                    cursor = { x: startPos.x, y: startPos.y };
-                    trialStartFlag = true;
-                    drawScreen();
-                } else {
-                    finishExperiment();
-                }
+        // -- Plot error angle vs trial --
+        new Chart(document.getElementById('plot2'),{
+            type:'line',
+            data:{
+                labels: [...Array(nTrials).keys()].map(x=>x+1),
+                datasets:[{
+                    label:"Cursor-Target Angle Error (deg)",
+                    data: angleErrors,
+                    borderColor: "#F88",
+                    fill:false
+                }]
+            },
+            options:{responsive:false,
+                plugins:{title:{display:true,text:"Cursor angle error vs trial"}},
+                scales:{y:{beginAtZero:false, title:{text:"Angular error (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
             }
-        }
+        });
 
-        function finishExperiment() {
-            drawScreen();
-            ctx.font = "32px Arial";
-            ctx.fillStyle = "black";
-            ctx.fillText("Experiment complete!", w/2-170, h/2-70);
-            plotResults();
-        }
+    }
 
-        function plotResults() {
-            const plotDiv = document.getElementById('plot');
-            plotDiv.style.display = "block";
-            plotDiv.innerHTML = "<b>Results:</b><br>";
-
-            function svgPlot(data, labelY, labelTitle, color) {
-                let width = Math.min(500, w*0.7), height = 230, pad = 40;
-                let maxY = Math.max(...data), minY = Math.min(...data);
-                if (maxY-minY < 40) { maxY += 20; minY -= 20; }
-                let pts = data.map((y, i) => {
-                    let x = pad + i * (width - 2*pad)/(TRIALS-1);
-                    let yPos = height-pad - ((y - minY)*(height-pad-pad))/(maxY-minY+1e-6);
-                    return {x, y:yPos};
-                });
-
-                let pointsStr = pts.map((p,i) => (i === 0 ? `M${p.x},${p.y}` : `L${p.x},${p.y}`)).join(" ");
-                let circlesStr = pts.map((p,i) => `<circle cx="${p.x}" cy="${p.y}" r="4" fill="${color}" />`).join('');
-
-                return `<svg width="${width}" height="${height}" style="background:#fcfcff;border:1px solid #ccc;margin-bottom:20px">
-                    <text x="${pad}" y="22" font-size="16">${labelTitle}</text>
-                    <text x="${width/2-20}" y="${height-pad+32}" font-size="13">Trial</text>
-                    <text x="14" y="${pad+10}" font-size="13" transform="rotate(-90,14,${pad+10})">${labelY}</text>
-                    <line x1="${pad}" y1="${height-pad}" x2="${width-pad}" y2="${height-pad}" stroke="#555"/>
-                    <line x1="${pad}" y1="${pad}" x2="${pad}" y2="${height-pad}" stroke="#555"/>
-                    ${[minY, maxY].map((v,i) => {
-                            let yPos = height-pad - ((v - minY)*(height-pad-pad))/(maxY-minY+1e-6);
-                            return `<text x="6" y="${yPos+4}" font-size="11">${v.toFixed(1)}</text>
-                                     <line x1="${pad-5}" y1="${yPos}" x2="${pad}" y2="${yPos}" stroke="#888"/>`;
-                        }).join('')}
-                    <path d="${pointsStr}" stroke="${color}" stroke-width="2" fill="none"/>
-                    ${circlesStr}
-                </svg>`;
-            }
-
-            plotDiv.innerHTML += svgPlot(
-                reachAngles, "Reach angle (deg)",
-                "Reach angles from home per trial", "#3297D4"
-            );
-            plotDiv.innerHTML += svgPlot(
-                errorAngles, "Error angle (deg)",
-                "Error angles (relative to target) per trial", "#D43432"
-            );
-        }
+    // ---- Start ----
+    draw();
+    setInfo(`Click near the blue circle to start Trial 1`);
     </script>
 </body>
 </html>
