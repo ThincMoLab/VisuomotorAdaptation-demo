@@ -2,13 +2,13 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Visuomotor Adaptation - Trackpad/Tablet Demo</title>
+  <title>Visuomotor Adaptation Demo</title>
   <style>
     canvas { 
         background: #eef; 
         display: block; 
         margin: 1em auto;
-        cursor: none;        /* <---- THIS HIDES THE SYSTEM MOUSE/POINTER */
+        cursor: none;
     }
     #plots { display: none; }
     #taskArea { text-align: center; }
@@ -26,6 +26,7 @@
   <canvas id="plot1" width="600" height="300"></canvas>
   <canvas id="plot2" width="600" height="300"></canvas>
 </div>
+<!-- Chart.js must be loaded before your script! -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
 const nTrials = 30;
