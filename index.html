@@ -181,40 +181,34 @@ canvas.addEventListener('touchmove', e => { e.preventDefault(); });
 function endTask() {
     document.getElementById('taskArea').style.display = "none";
     document.getElementById('plots').style.display = "block";
+    const targetAngleDeg = Math.atan2(target.y-home.y, target.x-home.x) * 180/Math.PI;
+    const handTargetErrors = reachDirections.map(a => a - targetAngleDeg);
+
+    // Plot: Hand-Target angle error
     new Chart(document.getElementById('plot1'),{
         type:'line',
         data:{
             labels: [...Array(nTrials).keys()].map(x=>x+1),
             datasets:[
                 {
-                    label: "Hand reach direction (deg)",
-                    data: reachDirections,
+                    label: "Hand-Target Angle Error (deg)",
+                    data: handTargetErrors,
                     borderColor: "#88F",
                     pointStyle:'cross',
-                    fill:false
-                },
-                {
-                    label: "Cursor direction (deg)",
-                    data: cursorAngles,
-                    borderColor: "#444",
-                    borderDash: [5,5],
-                    fill:false
-                },
-                {
-                    label:"Target direction (deg)",
-                    data: Array(nTrials).fill(
-                        Math.atan2(target.y-home.y,target.x-home.x)*180/Math.PI),
-                    borderColor:"#F88",
-                    borderDash:[2,2],
                     fill:false
                 }
             ]
         },
         options:{responsive:false,
-            plugins:{title:{display:true,text:"Reach direction per trial"}},
-            scales:{y:{beginAtZero:false, title:{text:"Angle (deg)",display:true}}, x:{title:{text:"Trial#",display:true}}}
+            plugins:{title:{display:true,text:"Hand-Target angle error per trial"}},
+            scales:{
+                y:{beginAtZero:false, title:{text:"Angular error (deg)",display:true}},
+                x:{title:{text:"Trial#",display:true}}
+            }
         }
     });
+
+    // Second plot: cursor-target error (as before)
     new Chart(document.getElementById('plot2'),{
         type:'line',
         data:{
